@@ -1,8 +1,8 @@
-# Setup cho thành viên và agent tích hợp
+# Chạy Identity và thử từ agent của bạn
 
-## Chuẩn bị
+## 1. Cài thư viện và chạy kiểm tra
 
-Từ thư mục gốc repo, dùng Python 3.11 trở lên. Các lệnh dưới đây dùng Bash, bao gồm Git Bash hoặc WSL trên Windows.
+Dùng Python 3.11 trở lên. Chạy các lệnh ở thư mục gốc của repo bằng Bash. Trên Windows, có thể dùng Git Bash hoặc WSL.
 
 ```bash
 python3 -m venv .venv
@@ -12,13 +12,14 @@ python -m unittest discover -s tests -v
 python -m agent_auth.demo
 ```
 
-Lệnh cuối thực hiện 12 bước qua hai listener HTTP cục bộ. Exit code 0 nghĩa là tất cả bước đều đạt. Dùng chế độ này cho CI và kiểm tra trước khi sửa.
+Lệnh cuối chạy 12 bước qua HTTP rồi tự dừng. Nếu cả hai lệnh kiểm thử kết thúc với mã 0, bạn đã có kết quả làm mốc trước khi sửa.
 
-## Chạy Identity và Task API để gắn agent riêng
+## 2. Để hai dịch vụ chạy trong lúc làm việc
 
-Ở terminal 1, tạo hai secret demo một lần trong `.env.local`. Git bỏ qua file này. Nếu file đã có credential đang dùng, giữ lại và chạy từ lệnh `set -a`.
+Mở terminal 1 để chạy Identity. Nếu đây là lần đầu, tạo hai secret demo trong `.env.local`. Git bỏ qua tệp này. Nếu đã có tệp, chạy từ dòng `set -a` để dùng lại secret.
 
 ```bash
+source .venv/bin/activate
 (
   umask 077
   set -C
@@ -35,16 +36,16 @@ set +a
 python -m agent_auth.local identity
 ```
 
-Ở terminal 2, kích hoạt môi trường Python rồi chạy Task API.
+Mở terminal 2 để chạy Task API. Task API dùng issuer, audience và địa chỉ JWKS đã cấu hình.
 
 ```bash
 source .venv/bin/activate
 python -m agent_auth.local tasks
 ```
 
-Hai tiến trình chạy trên loopback. Nếu cổng đang bận, truyền cùng cặp `--identity-port` và `--task-port` cho cả hai lệnh rồi sửa URL trong ví dụ client. Có thể dùng `python -m agent_auth.demo --serve` để chạy cả hai dịch vụ bằng một lệnh.
+Mặc định Identity dùng cổng 8001 và Task API dùng cổng 8002 trên loopback. Nếu cổng đang bận, truyền cùng một cặp `--identity-port` và `--task-port` cho cả hai lệnh rồi sửa URL ở ví dụ bên dưới. Nếu chỉ cần thử nhanh, có thể dùng `python -m agent_auth.demo --serve` để mở cả hai dịch vụ.
 
-| Cấu hình | Giá trị local |
+| Client cần biết gì? | Giá trị mặc định |
 |---|---|
 | Issuer | `http://127.0.0.1:8001` |
 | Token endpoint | `http://127.0.0.1:8001/oauth/token` |
@@ -54,9 +55,11 @@ Hai tiến trình chạy trên loopback. Nếu cổng đang bận, truyền cùn
 | Student | Client ID `student`, scope `task:read` |
 | Instructor | Client ID `instructor`, scope `task:issue` |
 
-Chế độ chạy cục bộ dùng token 300 giây. Identity tạo khóa ký mới khi khởi động. Task API giữ cache JWKS 60 giây, nên sau khi khởi động lại Identity, có thể đợi cache hết hạn hoặc khởi động lại Task API để lấy khóa mới. Dùng Ctrl+C để dừng.
+Token ở chế độ này có hạn 300 giây. Identity tạo khóa ký mới mỗi lần khởi động, còn Task API giữ tập khóa đã tải trong 60 giây. Nếu vừa khởi động lại Identity và token mới bị từ chối, đợi Task API tải lại JWKS hoặc khởi động lại Task API để xóa cache. Dùng Ctrl+C để dừng từng dịch vụ.
 
-Ở terminal 3, thử bằng một client bên ngoài. Đoạn mẫu chỉ in kết quả và actor.
+## 3. Gọi thử từ tiến trình khác
+
+Mở terminal 3. Đoạn mã dưới đây lấy token cho Instructor và Student rồi gọi cùng một API. Kết quả chỉ in mã HTTP và nội dung API trả về.
 
 ```bash
 source .venv/bin/activate
@@ -98,12 +101,21 @@ with httpx.Client(timeout=4, trust_env=False) as client:
 PY
 ```
 
-Kỳ vọng `instructor 200` với actor `instructor` và `student 403` với `insufficient_scope`.
+Instructor nhận `200` với actor `instructor`. Student nhận `403 insufficient_scope` dù nội dung yêu cầu cũng ghi `from: instructor`.
 
-## Tích hợp agent của nhóm
+## 4. Đưa cách gọi này vào agent của nhóm
 
-1. Với agent gọi, lấy bộ cấu hình issuer, client ID, credential, resource và scope từ chủ môi trường. Dùng ví dụ HTTP ở trên cho bất kỳ ngôn ngữ nào có HTTP client. Giữ token theo cặp resource và scope. Với lời gọi sang resource khác, xin token khác.
-2. Với agent nhận, định cấu hình issuer, JWKS URL và audience của chính API. Đọc [resource.py](../agent_auth/resource.py) để dùng `AccessTokenValidator` trong handler mẫu. Sau xác thực JWT, kiểm tra scope cho action và quyền trên đối tượng trước khi xử lý nghiệp vụ.
-3. Kiểm tra `401` cho token thiếu, sai hoặc hết hạn, và `403` cho token đúng nhưng thiếu quyền. Khi dịch vụ đích đã tích hợp, kiểm tra cả happy path lẫn request quyền sai theo [checklist bàn giao](handoff.md).
+**Nếu agent gọi dịch vụ khác**, lấy issuer, client ID, secret, resource và scope từ người quản lý môi trường. Agent có thể dùng bất kỳ thư viện HTTP nào để gửi cùng các trường trong ví dụ. Giữ token theo resource và scope. Khi đổi dịch vụ đích, xin token cho resource mới.
 
-`401 invalid_client` ở token endpoint yêu cầu kiểm tra client ID và credential. `400 invalid_target` yêu cầu kiểm tra resource. `400 invalid_scope` yêu cầu kiểm tra policy của client. `503` ở Task API yêu cầu kiểm tra đường tới JWKS. Khi ra ngoài loopback, cấu hình HTTPS và dùng bộ credential riêng của môi trường đó.
+**Nếu agent cung cấp API**, cấu hình issuer, JWKS URL và audience của API. Dùng `AccessTokenValidator` để kiểm tra JWT, rồi kiểm tra scope cho thao tác và quyền trên đối tượng trước khi xử lý. Thử cả yêu cầu được phép và yêu cầu thiếu quyền. [API mẫu](../agent_auth/resource.py) · [Checklist bàn giao](handoff.md)
+
+| Nếu thấy | Kiểm tra |
+|---|---|
+| Identity trả `401 invalid_client` | Client ID và secret |
+| Identity trả `400 invalid_target` | Giá trị `resource` |
+| Identity trả `400 invalid_scope` | Các quyền đã cấp cho client ở resource đó |
+| Task API trả `401` | Token có mặt, còn hạn và có đúng issuer, audience hay không |
+| Task API trả `403` | Token hợp lệ có đủ quyền thao tác hay không |
+| Task API trả `503` | Đường từ Task API đến JWKS và tập khóa có dùng được hay không |
+
+Khi dùng môi trường chung, cấu hình HTTPS và dùng secret riêng của môi trường đó.

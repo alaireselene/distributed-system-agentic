@@ -1,16 +1,10 @@
-# Authentication cho Multi-Agent
+# Xác thực và phân quyền cho hệ thống multi-agent
 
-Demo chạy hai dịch vụ HTTP độc lập trên máy cục bộ. Identity Service cấp JWT cho agent qua OAuth 2.0 Client Credentials. Task API lấy khóa công khai từ JWKS, xác minh token và chỉ cho agent có scope `task:issue` tạo task mẫu.
+Khi một agent gửi `from: instructor`, API cần biết agent đó là ai và có quyền giao việc hay không. Trong bản mẫu, Identity xác thực agent và cấp token. Task API kiểm tra token rồi mới xét quyền `task:issue`. Danh tính trả về lấy từ `sub` đã xác minh.
 
-- [Kiến trúc và các quyết định cần review](docs/architecture.md)
-- [Setup cho agent kết nối từ tiến trình riêng](docs/agent-setup.md)
-- [Spec bàn giao và checklist theo thành viên](docs/handoff.md)
-- [Audit mã nguồn Registry và Broker](docs/integration-audit.md)
-- [Hướng dẫn làm việc cho AI agent trong repo](AGENTS.md)
+## Chạy thử trên máy
 
-## Chạy demo
-
-Yêu cầu Python 3.11 trở lên. Từ thư mục gốc của repo:
+Dùng Python 3.11 trở lên. Chạy các lệnh sau ở thư mục gốc của repo bằng Bash.
 
 ```bash
 python3 -m venv .venv
@@ -20,37 +14,25 @@ python -m unittest discover -s tests -v
 python -m agent_auth.demo
 ```
 
-Lệnh cuối khởi động hai dịch vụ trên hai cổng loopback ngẫu nhiên, chạy các ca kiểm chứng qua HTTP rồi dừng. Credential và khóa ký sinh riêng mỗi lần chạy. Token demo sống 4 giây để có thể thấy ca hết hạn ngay trong buổi trình bày.
+Lệnh demo mở hai cổng HTTP trên loopback, chạy 12 bước rồi tự dừng. Mỗi lần chạy, demo tạo secret và khóa ký mới. Token có hạn 4 giây để xem được ca hết hạn ngay trong buổi trình bày.
 
-Khi phát triển từng phần, chạy `python -m agent_auth.local identity` và `python -m agent_auth.local tasks` ở hai terminal. Xem [hướng dẫn tạo credential và thử bằng client riêng](docs/agent-setup.md).
-
-| Tình huống | Kết quả |
+| Tình huống | Kết quả mong đợi |
 |---|---|
-| Client secret sai | `401 invalid_client` |
-| Student xin quyền `task:issue` | `400 invalid_scope` |
-| Thiếu token, token sai định dạng, sai audience hoặc hết hạn tại Task API | `401` |
-| Student có token hợp lệ nhưng thiếu scope, kể cả khi gửi `from: instructor` | `403 insufficient_scope` |
-| Instructor có token đúng audience và scope | `200`, actor lấy từ token đã xác minh |
+| Agent dùng sai client secret | Identity trả `401 invalid_client` |
+| Student xin quyền `task:issue` | Identity trả `400 invalid_scope` |
+| Agent gọi Task API với token thiếu, sai định dạng, sai audience hoặc hết hạn | Task API trả `401` |
+| Student có token hợp lệ nhưng thiếu `task:issue`, dù gửi `from: instructor` | Task API trả `403 insufficient_scope` |
+| Instructor có token dành cho Task API và có `task:issue` | Task API trả `200` và lấy danh tính từ token |
 
-## Hợp đồng của prototype
+Khi cần chạy hai dịch vụ ở hai tiến trình riêng, dùng `python -m agent_auth.local identity` và `python -m agent_auth.local tasks`. Xem cách tạo secret và gọi thử từ tiến trình thứ ba trong [hướng dẫn chạy trên máy](docs/agent-setup.md).
 
-| Thành phần | Endpoint | Hành vi |
-|---|---|---|
-| Identity | `GET /.well-known/oauth-authorization-server` | Công bố issuer, token endpoint, JWKS URI và phương thức xác thực client |
-| Identity | `GET /.well-known/jwks.json` | Công bố RSA public key cùng `kid` |
-| Identity | `POST /oauth/token` | HTTP Basic, form `grant_type=client_credentials`, một `resource` và một chuỗi `scope` |
-| Agent mẫu | `POST /tasks` | Bearer JWT access token ký RS256. Kiểm tra issuer, audience, thời hạn và scope |
+## Đọc tiếp theo phần việc
 
-Demo cấu hình sẵn issuer, audience và JWKS URL. Task API giữ JWKS trong 60 giây và trả `503` nếu đến hạn làm mới mà không tải được khóa. Python, FastAPI và PyJWT là lựa chọn cho prototype. Hợp đồng HTTP cho phép các nhóm tích hợp bằng ngôn ngữ của họ. Hai dịch vụ sử dụng HTTP loopback khi chạy demo. Môi trường chia sẻ cần HTTPS, cấu hình issuer ổn định và lưu credential, khóa ký ngoài tiến trình demo.
-
-Tham chiếu gồm [OAuth 2.0 Client Credentials](https://www.rfc-editor.org/rfc/rfc6749.html#section-4.4), [Bearer Token](https://www.rfc-editor.org/rfc/rfc6750.html#section-3), [Authorization Server Metadata](https://www.rfc-editor.org/rfc/rfc8414.html), [Resource Indicators](https://www.rfc-editor.org/rfc/rfc8707.html#section-2.2) và [JWT Access Token Profile](https://www.rfc-editor.org/rfc/rfc9068.html#section-4).
-
-## Điểm cần thống nhất sau demo
-
-| Đầu mối | Nội dung cần thống nhất |
+| Nếu cần | Đọc |
 |---|---|
-| Instructor | Xác nhận ca nghiệm thu qua Broker và phạm vi áp dụng cho các yêu cầu ngoài ca demo. |
-| Broker | Xác minh danh tính ở send, receive và ACK. Thống nhất cách gắn sender đã xác minh vào envelope khi giao tin và cách triển khai HTTPS. |
-| Registry | Ánh xạ danh tính đã xác minh tới `agent_id` và chủ Agent Card. Chốt các API được bảo vệ và cách chuyển tiếp từ credential Registry hiện tại. |
-| Application Agents | Chọn một agent thật để thử SDK và chạy luồng end-to-end, chốt audience và scope ở endpoint tích hợp. |
-| Observability | Thống nhất cách liên kết quyết định xác thực với `trace_id` và `message_id`, cùng quy tắc loại token và secret khỏi log. |
+| Hiểu agent xin token thế nào, API trả lỗi gì và điều gì xảy ra khi Identity ngừng chạy | [Kiến trúc và hợp đồng HTTP](docs/architecture.md) |
+| Tìm nơi bắt đầu trong code, xem phần việc của từng người và checklist mở PR | [Bàn giao cho nhóm](docs/handoff.md) |
+| Biết Registry và Broker đang xử lý những gì ở bản mã đã đọc | [Đối chiếu mã nguồn hai nhóm](docs/integration-audit.md) |
+| Giao một phần việc trong repo cho AI agent | [Hướng dẫn đóng góp](AGENTS.md) |
+
+Ca nghiệm thu đề xuất là gửi công việc qua Broker. Nhóm cần xác nhận cách giao tin với Broker, cách gắn danh tính với Agent Card với Registry và cách nối `trace_id` / `message_id` với Observability. Trước khi thử chung, thống nhất issuer HTTPS, cách giao secret và nơi giữ khóa ký. [Chi tiết tích hợp](docs/architecture.md)
