@@ -1,0 +1,49 @@
+name: Base contribution
+
+on:
+  push:
+    branches-ignore: [main]
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  branch:
+    name: Branch convention
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check source branch
+        env:
+          SOURCE_BRANCH: ${{ github.head_ref || github.ref_name }}
+          EVENT_NAME: ${{ github.event_name }}
+        run: |
+          if [[ ! "$SOURCE_BRANCH" =~ ^codex/(integrate|sdk|identity|quality)/[a-z0-9]+(-[a-z0-9]+)*$ ]]; then
+            echo '::error::Use codex/<workstream>/<slug>. See AGENTS.md.'
+            exit 1
+          fi
+          if [[ "$EVENT_NAME" == push ]]; then
+            echo 'Open or update a PR against main and request review from Trường Sơn.' >> "$GITHUB_STEP_SUMMARY"
+            echo '::notice::Open or update a PR against main and request review from Trường Sơn.'
+          fi
+
+  smoke:
+    name: Authentication checks (Python ${{ matrix.python }})
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python: ['3.11', '3.12']
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+          cache: pip
+      - run: python -m pip install -r requirements.txt
+      - run: python -m unittest discover -s tests -v
+      - run: python -m agent_auth.demo
